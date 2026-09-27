@@ -2,9 +2,10 @@ import type { FlashListRef } from '@shopify/flash-list';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import PagerView from 'react-native-pager-view';
+import PagerView, { type PagerViewOnPageScrollEvent } from 'react-native-pager-view';
 import Animated, {
   useAnimatedStyle,
+  useEvent,
   useSharedValue,
 } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -17,6 +18,7 @@ import { TopBar } from '../components/TopBar';
 import { usePaginatedPhotos } from '../hooks/usePaginatedPhotos';
 import type { FeedPhoto, TabKey } from '../types/profile';
 
+const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
 const TAB_HEIGHT = 48;
 const TAB_KEYS = ['posts', 'reels', 'tagged'] as const satisfies readonly TabKey[];
 
@@ -55,6 +57,19 @@ export function ProfilePagerDemoScreen() {
   const taggedY = useSharedValue(0);
   const collapseY = useSharedValue(0);
   const activePageIndex = useSharedValue(0);
+  const pagePosition = useSharedValue(0);
+
+  // Follow native progress on the UI runtime, including cancelled swipes
+  // and transitions started by tapping a tab. No per-frame React updates.
+  const pageScrollHandler = useEvent<PagerViewOnPageScrollEvent>(
+    (event) => {
+      'worklet';
+      if (event.eventName.endsWith('onPageScroll')) {
+        pagePosition.value = event.position + event.offset;
+      }
+    },
+    ['onPageScroll'],
+  );
 
   const offsets = useMemo(
     () => [postsY, reelsY, taggedY],
@@ -158,11 +173,12 @@ export function ProfilePagerDemoScreen() {
 
       <View style={styles.content}>
         {profileHeight > 0 ? (
-          <PagerView
+          <AnimatedPagerView
             ref={pagerRef}
             style={styles.pager}
             initialPage={0}
             offscreenPageLimit={2}
+            onPageScroll={pageScrollHandler}
             onPageScrollStateChanged={(event) => {
               if (event.nativeEvent.pageScrollState === 'dragging') {
                 synchronizeInactivePages();
@@ -201,7 +217,7 @@ export function ProfilePagerDemoScreen() {
                 </View>
               );
             })}
-          </PagerView>
+          </AnimatedPagerView>
         ) : (
           <View style={styles.pager} />
         )}
@@ -232,7 +248,11 @@ export function ProfilePagerDemoScreen() {
               tabsStyle,
             ]}
           >
-            <ProfileTabs activeTab={activeTab} onChange={selectTab} />
+            <ProfileTabs
+              activeTab={activeTab}
+              onChange={selectTab}
+              pagePosition={pagePosition}
+            />
           </Animated.View>
         ) : null}
       </View>

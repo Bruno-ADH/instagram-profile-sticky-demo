@@ -1,4 +1,10 @@
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import Animated, {
+  interpolateColor,
+  type SharedValue,
+  useAnimatedStyle,
+  useSharedValue,
+} from 'react-native-reanimated';
 
 import type { TabKey } from '../types/profile';
 
@@ -11,12 +17,32 @@ const tabs: Array<{ key: TabKey; icon: string; label: string }> = [
 interface ProfileTabsProps {
   activeTab: TabKey;
   onChange: (tab: TabKey) => void;
+  pagePosition?: SharedValue<number>;
 }
 
-export function ProfileTabs({ activeTab, onChange }: ProfileTabsProps) {
+export function ProfileTabs({ activeTab, onChange, pagePosition }: ProfileTabsProps) {
+  const tabWidth = useSharedValue(0);
+  const activeIndex = tabs.findIndex((tab) => tab.key === activeTab);
+  const indicatorStyle = useAnimatedStyle(() => {
+    // The original screen has no pager; retain its tap-based selection.
+    const position = Math.max(
+      0,
+      Math.min(pagePosition?.value ?? activeIndex, tabs.length - 1),
+    );
+    return {
+      width: Math.max(0, tabWidth.value - 36),
+      transform: [{ translateX: position * tabWidth.value }],
+    };
+  });
+
   return (
-    <View style={styles.container}>
-      {tabs.map((tab) => {
+    <View
+      style={styles.container}
+      onLayout={(event) => {
+        tabWidth.value = event.nativeEvent.layout.width / tabs.length;
+      }}
+    >
+      {tabs.map((tab, index) => {
         const active = tab.key === activeTab;
 
         return (
@@ -28,13 +54,40 @@ export function ProfileTabs({ activeTab, onChange }: ProfileTabsProps) {
             onPress={() => onChange(tab.key)}
             style={styles.tab}
           >
-            <Text style={[styles.icon, active && styles.iconActive]}>{tab.icon}</Text>
-            <View style={[styles.indicator, active && styles.indicatorActive]} />
+            <TabIcon
+              icon={tab.icon}
+              index={index}
+              activeIndex={activeIndex}
+              pagePosition={pagePosition}
+            />
           </Pressable>
         );
       })}
+      <Animated.View pointerEvents="none" style={[styles.indicator, indicatorStyle]} />
     </View>
   );
+}
+
+function TabIcon({
+  icon,
+  index,
+  activeIndex,
+  pagePosition,
+}: {
+  icon: string;
+  index: number;
+  activeIndex: number;
+  pagePosition?: SharedValue<number>;
+}) {
+  const iconStyle = useAnimatedStyle(() => ({
+    color: interpolateColor(
+      Math.min(1, Math.abs((pagePosition?.value ?? activeIndex) - index)),
+      [0, 1],
+      ['#111', '#777'],
+    ),
+  }));
+
+  return <Animated.Text style={[styles.icon, iconStyle]}>{icon}</Animated.Text>;
 }
 
 const styles = StyleSheet.create({
@@ -56,18 +109,11 @@ const styles = StyleSheet.create({
     fontSize: 22,
     color: '#777',
   },
-  iconActive: {
-    color: '#111',
-  },
   indicator: {
     position: 'absolute',
     left: 18,
-    right: 18,
     bottom: 0,
     height: 1.5,
-    backgroundColor: 'transparent',
-  },
-  indicatorActive: {
     backgroundColor: '#111',
   },
 });
