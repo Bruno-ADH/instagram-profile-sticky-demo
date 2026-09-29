@@ -4,7 +4,7 @@ import {
   type FlashListRef,
 } from '@shopify/flash-list';
 import type { ReactElement, Ref } from 'react';
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import Animated, {
   cancelAnimation,
@@ -16,6 +16,8 @@ import Animated, {
   useAnimatedScrollHandler,
 } from 'react-native-reanimated';
 
+import { GRID_COLUMNS, TAB_HEIGHT } from '../constants/profile-tabs';
+import { minimumGridFooter } from '../utils/profile-scroll';
 import type { OverlayScrollState } from '../hooks/use-profile-overlay-scroll';
 import type { PaginatedPhotoFeed } from '../hooks/usePaginatedPhotos';
 import type { FeedPhoto, TabKey } from '../types/profile';
@@ -39,6 +41,7 @@ interface ProfileGridPageProps {
   listRef: Ref<FlashListRef<FeedPhoto>>;
   offsetY: SharedValue<number>;
   maxOffsetY: SharedValue<number>;
+  requestedY: SharedValue<number>;
   overlayScroll: OverlayScrollState;
   activePageIndex: SharedValue<number>;
   collapseY: SharedValue<number>;
@@ -53,6 +56,7 @@ export function ProfileGridPage({
   listRef,
   offsetY,
   maxOffsetY,
+  requestedY,
   overlayScroll,
   activePageIndex,
   collapseY,
@@ -60,6 +64,7 @@ export function ProfileGridPage({
   const animatedRef = useAnimatedRef<FlashListRef<FeedPhoto>>();
   const contentHeight = useRef(0);
   const viewportHeight = useRef(0);
+  const [viewport, setViewport] = useState({ width: 0, height: 0 });
   const { page: overlayPage, offset: overlayOffset } = overlayScroll;
 
   const attachListRef = useCallback((ref: FlashListRef<FeedPhoto> | null) => {
@@ -77,18 +82,42 @@ export function ProfileGridPage({
     },
   );
 
+  useAnimatedReaction(
+    () => requestedY.value >= 0 && maxOffsetY.value >= collapsePoint - 1
+      ? Math.min(requestedY.value, maxOffsetY.value)
+      : null,
+    (targetY) => {
+      if (targetY === null) return;
+      if (Math.abs(offsetY.value - targetY) <= 1) {
+        // A no-op scroll need not emit another native event.
+        requestedY.value = -1;
+        if (activePageIndex.value === pageIndex) {
+          collapseY.value = Math.min(offsetY.value, collapsePoint);
+        }
+      } else {
+        scrollTo(animatedRef, 0, targetY, false);
+      }
+    },
+  );
+
   const scrollHandler = useAnimatedScrollHandler(
     {
       onBeginDrag: () => {
         // A touch in the actual grid takes over from overlay-generated inertia.
         cancelAnimation(overlayOffset);
         overlayPage.value = -1;
+        requestedY.value = -1;
       },
       onScroll: (event) => {
         const y = Math.max(0, event.contentOffset.y);
         offsetY.value = y;
+        if (requestedY.value >= 0 && maxOffsetY.value >= collapsePoint - 1 &&
+            Math.abs(y - Math.min(requestedY.value, maxOffsetY.value)) <= 1) {
+          requestedY.value = -1;
+        }
 
         // Only the visible page is allowed to drive the shared profile header.
+        // A pending request must never prevent a real scroll from moving it.
         // Inactive pages can still be moved programmatically for synchronization.
         if (activePageIndex.value === pageIndex) {
           collapseY.value = Math.min(y, collapsePoint);
@@ -136,17 +165,21 @@ export function ProfileGridPage({
     <AnimatedFlashList
       ref={attachListRef}
       onLayout={(event) => {
-        viewportHeight.current = event.nativeEvent.layout.height;
+        const { width, height } = event.nativeEvent.layout;
+        viewportHeight.current = height;
+        setViewport((current) => current.width === width && current.height === height
+          ? current : { width, height });
         maxOffsetY.value = Math.max(0, contentHeight.current - viewportHeight.current);
       }}
       onContentSizeChange={(_width, height) => {
         contentHeight.current = height;
-        maxOffsetY.value = Math.max(0, height - viewportHeight.current);
+        maxOffsetY.value = viewportHeight.current > 0
+          ? Math.max(0, height - viewportHeight.current) : 0;
       }}
       data={feed.photos}
       renderItem={({ item }) => <PhotoCell photo={item} tab={tab} />}
       keyExtractor={(item) => item.key}
-      numColumns={3}
+      numColumns={GRID_COLUMNS}
       getItemType={() => 'photo'}
       contentContainerStyle={{ paddingTop: topInset }}
       maintainVisibleContentPosition={{ disabled: true }}
@@ -157,7 +190,13 @@ export function ProfileGridPage({
       refreshing={feed.isRefreshing}
       onRefresh={feed.refresh}
       progressViewOffset={topInset}
-      ListFooterComponent={footer}
+      ListFooterComponent={
+        <View style={{ minHeight: minimumGridFooter(
+          feed.photos.length, viewport.width, viewport.height, TAB_HEIGHT, GRID_COLUMNS,
+        ) }}>
+          {footer}
+        </View>
+      }
       showsVerticalScrollIndicator={false}
       contentInsetAdjustmentBehavior="never"
     />

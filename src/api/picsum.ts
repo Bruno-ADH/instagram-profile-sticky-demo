@@ -23,10 +23,12 @@ function toApiPage(tab: TabKey, localPage: number) {
 export async function fetchPhotoPage(
   tab: TabKey,
   localPage: number,
+  signal?: AbortSignal,
 ): Promise<FeedPhoto[]> {
   const apiPage = toApiPage(tab, localPage);
   const response = await fetch(
     `https://picsum.photos/v2/list?page=${apiPage}&limit=${PAGE_SIZE}`,
+    { signal },
   );
 
   if (!response.ok) {

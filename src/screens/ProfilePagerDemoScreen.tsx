@@ -1,15 +1,9 @@
-import type { FlashListRef } from '@shopify/flash-list';
 import { StatusBar } from 'expo-status-bar';
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 import { GestureDetector } from 'react-native-gesture-handler';
-import PagerView, { type PagerViewOnPageScrollEvent } from 'react-native-pager-view';
-import Animated, {
-  runOnUI,
-  useAnimatedStyle,
-  useEvent,
-  useSharedValue,
-} from 'react-native-reanimated';
+import PagerView from 'react-native-pager-view';
+import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { BottomBar } from '../components/BottomBar';
@@ -18,19 +12,19 @@ import { ProfileHeader } from '../components/ProfileHeader';
 import { ProfileTabs } from '../components/ProfileTabs';
 import { TopBar } from '../components/TopBar';
 import { usePaginatedPhotos } from '../hooks/usePaginatedPhotos';
-import { useProfileOverlayScroll } from '../hooks/use-profile-overlay-scroll';
-import type { FeedPhoto, TabKey } from '../types/profile';
+import { useProfilePager } from '../hooks/use-profile-pager';
+import { TAB_HEIGHT, TAB_KEYS } from '../constants/profile-tabs';
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
-const TAB_HEIGHT = 48;
-const TAB_KEYS = ['posts', 'reels', 'tagged'] as const satisfies readonly TabKey[];
 
 export function ProfilePagerDemoScreen() {
   const insets = useSafeAreaInsets();
-  const pagerRef = useRef<PagerView>(null);
-
-  const [activeTab, setActiveTab] = useState<TabKey>('posts');
   const [profileHeight, setProfileHeight] = useState(0);
+  const {
+    pagerRef, attachListRefs, activeTab, activePageIndex, pagePosition, collapseY,
+    offsets, maxOffsets, requestedOffsets, overlayScroll,
+    synchronizeInactivePages, selectTab, selectPage, pageScrollHandler,
+  } = useProfilePager(profileHeight);
 
   // The three requests/hooks stay mounted. Each tab therefore keeps its own
   // data, pagination state and loading state while the user moves between pages.
@@ -38,57 +32,7 @@ export function ProfilePagerDemoScreen() {
   const reelsFeed = usePaginatedPhotos('reels');
   const taggedFeed = usePaginatedPhotos('tagged');
 
-  const feeds = useMemo(
-    () => ({
-      posts: postsFeed,
-      reels: reelsFeed,
-      tagged: taggedFeed,
-    }),
-    [postsFeed, reelsFeed, taggedFeed],
-  );
-
-  const listRefs = useRef<Record<TabKey, FlashListRef<FeedPhoto> | null>>({
-    posts: null,
-    reels: null,
-    tagged: null,
-  });
-
-  // No React state is updated while vertically scrolling.
-  // Reanimated keeps these values on the UI runtime.
-  const postsY = useSharedValue(0);
-  const reelsY = useSharedValue(0);
-  const taggedY = useSharedValue(0);
-  const collapseY = useSharedValue(0);
-  const activePageIndex = useSharedValue(0);
-  const pagePosition = useSharedValue(0);
-
-  const offsets = useMemo(
-    () => [postsY, reelsY, taggedY],
-    [postsY, reelsY, taggedY],
-  );
-
-  const postsMaxY = useSharedValue(0);
-  const reelsMaxY = useSharedValue(0);
-  const taggedMaxY = useSharedValue(0);
-  const maxOffsets = useMemo(
-    () => [postsMaxY, reelsMaxY, taggedMaxY],
-    [postsMaxY, reelsMaxY, taggedMaxY],
-  );
-  const overlayScroll = useProfileOverlayScroll(activePageIndex, offsets, maxOffsets);
-  const stopOverlayScroll = overlayScroll.stop;
-
-  // Follow native progress on the UI runtime, including cancelled swipes
-  // and transitions started by tapping a tab. No per-frame React updates.
-  const pageScrollHandler = useEvent<PagerViewOnPageScrollEvent>(
-    (event) => {
-      'worklet';
-      if (event.eventName.endsWith('onPageScroll')) {
-        pagePosition.value = event.position + event.offset;
-        if (event.offset !== 0) stopOverlayScroll();
-      }
-    },
-    ['onPageScroll'],
-  );
+  const feeds = { posts: postsFeed, reels: reelsFeed, tagged: taggedFeed };
 
   const topInset = profileHeight + TAB_HEIGHT;
 
@@ -99,77 +43,6 @@ export function ProfilePagerDemoScreen() {
       },
     ],
   }));
-
-  /**
-   * Gives a target page an offset compatible with the currently visible header.
-   *
-   * - Header still visible -> both pages use exactly the same offset.
-   * - Header already collapsed -> target page is never allowed below the
-   *   collapse point, but a deeper saved scroll position is preserved.
-   */
-  const synchronizePage = useCallback(
-    (targetIndex: number, sourceIndex = activePageIndex.value) => {
-      if (profileHeight <= 0 || targetIndex === sourceIndex) return;
-
-      const sourceOffset = offsets[sourceIndex];
-      const targetOffset = offsets[targetIndex];
-      const targetTab = TAB_KEYS[targetIndex];
-
-      if (!sourceOffset || !targetOffset || !targetTab) return;
-
-      const sourceY = sourceOffset.value;
-      const targetSavedY = targetOffset.value;
-      const targetY =
-        sourceY < profileHeight
-          ? sourceY
-          : Math.max(targetSavedY, profileHeight);
-
-      targetOffset.value = targetY;
-      listRefs.current[targetTab]?.scrollToOffset({
-        offset: targetY,
-        animated: false,
-      });
-    },
-    [activePageIndex, offsets, profileHeight],
-  );
-
-  // Before the neighbouring page becomes visible during a horizontal drag,
-  // put both inactive lists in a vertically compatible position. This avoids
-  // the classic white gap / header jump during the swipe.
-  const synchronizeInactivePages = useCallback(() => {
-    const sourceIndex = activePageIndex.value;
-
-    for (let index = 0; index < TAB_KEYS.length; index += 1) {
-      if (index !== sourceIndex) synchronizePage(index, sourceIndex);
-    }
-  }, [activePageIndex, synchronizePage]);
-
-  const selectTab = useCallback(
-    (nextTab: TabKey) => {
-      runOnUI(stopOverlayScroll)();
-      const nextIndex = TAB_KEYS.indexOf(nextTab);
-      const currentIndex = activePageIndex.value;
-
-      if (nextIndex === currentIndex) {
-        const currentOffset = offsets[currentIndex];
-        if (!currentOffset) return;
-
-        const currentY = currentOffset.value;
-        const targetY = currentY >= profileHeight ? profileHeight : 0;
-
-        currentOffset.value = targetY;
-        listRefs.current[nextTab]?.scrollToOffset({
-          offset: targetY,
-          animated: true,
-        });
-        return;
-      }
-
-      synchronizePage(nextIndex, currentIndex);
-      pagerRef.current?.setPage(nextIndex);
-    },
-    [activePageIndex, offsets, profileHeight, stopOverlayScroll, synchronizePage],
-  );
 
   return (
     <View style={styles.screen}>
@@ -191,21 +64,14 @@ export function ProfilePagerDemoScreen() {
                 synchronizeInactivePages();
               }
             }}
-            onPageSelected={(event) => {
-              const nextIndex = event.nativeEvent.position;
-              const nextTab = TAB_KEYS[nextIndex];
-              const nextOffset = offsets[nextIndex];
-              if (!nextTab || !nextOffset) return;
-
-              activePageIndex.value = nextIndex;
-              collapseY.value = Math.min(nextOffset.value, profileHeight);
-              setActiveTab(nextTab);
-            }}
+            onPageSelected={(event) => selectPage(event.nativeEvent.position)}
           >
             {TAB_KEYS.map((tab, index) => {
               const offsetY = offsets[index];
               const maxOffsetY = maxOffsets[index];
-              if (!offsetY || !maxOffsetY) return null;
+              const requestedY = requestedOffsets[index];
+              const listRef = attachListRefs[index];
+              if (!offsetY || !maxOffsetY || !requestedY || !listRef) return null;
 
               return (
                 <View key={tab} style={styles.page} collapsable={false}>
@@ -215,9 +81,8 @@ export function ProfilePagerDemoScreen() {
                     feed={feeds[tab]}
                     topInset={topInset}
                     collapsePoint={profileHeight}
-                    listRef={(ref) => {
-                      listRefs.current[tab] = ref;
-                    }}
+                    listRef={listRef}
+                    requestedY={requestedY}
                     offsetY={offsetY}
                     maxOffsetY={maxOffsetY}
                     overlayScroll={overlayScroll.state}

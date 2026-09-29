@@ -1,4 +1,6 @@
-export type TabKey = 'posts' | 'reels' | 'tagged';
+import type { PROFILE_TABS } from '../constants/profile-tabs';
+
+export type TabKey = (typeof PROFILE_TABS)[number]['key'];
 
 export interface PicsumPhoto {
   id: string;

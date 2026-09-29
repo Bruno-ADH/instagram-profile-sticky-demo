@@ -6,13 +6,8 @@ import Animated, {
   useSharedValue,
 } from 'react-native-reanimated';
 
+import { PROFILE_TABS as tabs, TAB_HEIGHT } from '../constants/profile-tabs';
 import type { TabKey } from '../types/profile';
-
-const tabs: Array<{ key: TabKey; icon: string; label: string }> = [
-  { key: 'posts', icon: '▦', label: 'Publications' },
-  { key: 'reels', icon: '▶', label: 'Reels' },
-  { key: 'tagged', icon: '♙', label: 'Identifié' },
-];
 
 interface ProfileTabsProps {
   activeTab: TabKey;
@@ -93,7 +88,7 @@ function TabIcon({
 const styles = StyleSheet.create({
   container: {
     width: '100%',
-    height: 48,
+    height: TAB_HEIGHT,
     flexDirection: 'row',
     backgroundColor: '#fff',
     borderBottomWidth: StyleSheet.hairlineWidth,

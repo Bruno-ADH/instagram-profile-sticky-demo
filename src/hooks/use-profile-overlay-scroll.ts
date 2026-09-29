@@ -18,6 +18,7 @@ export function useProfileOverlayScroll(
   activePageIndex: SharedValue<number>,
   offsets: readonly SharedValue<number>[],
   maxOffsets: readonly SharedValue<number>[],
+  requestedOffsets: readonly SharedValue<number>[],
 ) {
   const page = useSharedValue(-1);
   const offset = useSharedValue(0);
@@ -43,6 +44,8 @@ export function useProfileOverlayScroll(
       const index = activePageIndex.value;
       const currentOffset = offsets[index];
       if (!currentOffset) return;
+      const requested = requestedOffsets[index];
+      if (requested) requested.value = -1;
       startOffset.value = currentOffset.value;
       startTouchY.value = event.absoluteY;
       offset.value = currentOffset.value;
