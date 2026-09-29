@@ -2,8 +2,10 @@ import type { FlashListRef } from '@shopify/flash-list';
 import { StatusBar } from 'expo-status-bar';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
+import { GestureDetector } from 'react-native-gesture-handler';
 import PagerView, { type PagerViewOnPageScrollEvent } from 'react-native-pager-view';
 import Animated, {
+  runOnUI,
   useAnimatedStyle,
   useEvent,
   useSharedValue,
@@ -16,6 +18,7 @@ import { ProfileHeader } from '../components/ProfileHeader';
 import { ProfileTabs } from '../components/ProfileTabs';
 import { TopBar } from '../components/TopBar';
 import { usePaginatedPhotos } from '../hooks/usePaginatedPhotos';
+import { useProfileOverlayScroll } from '../hooks/use-profile-overlay-scroll';
 import type { FeedPhoto, TabKey } from '../types/profile';
 
 const AnimatedPagerView = Animated.createAnimatedComponent(PagerView);
@@ -59,6 +62,21 @@ export function ProfilePagerDemoScreen() {
   const activePageIndex = useSharedValue(0);
   const pagePosition = useSharedValue(0);
 
+  const offsets = useMemo(
+    () => [postsY, reelsY, taggedY],
+    [postsY, reelsY, taggedY],
+  );
+
+  const postsMaxY = useSharedValue(0);
+  const reelsMaxY = useSharedValue(0);
+  const taggedMaxY = useSharedValue(0);
+  const maxOffsets = useMemo(
+    () => [postsMaxY, reelsMaxY, taggedMaxY],
+    [postsMaxY, reelsMaxY, taggedMaxY],
+  );
+  const overlayScroll = useProfileOverlayScroll(activePageIndex, offsets, maxOffsets);
+  const stopOverlayScroll = overlayScroll.stop;
+
   // Follow native progress on the UI runtime, including cancelled swipes
   // and transitions started by tapping a tab. No per-frame React updates.
   const pageScrollHandler = useEvent<PagerViewOnPageScrollEvent>(
@@ -66,27 +84,15 @@ export function ProfilePagerDemoScreen() {
       'worklet';
       if (event.eventName.endsWith('onPageScroll')) {
         pagePosition.value = event.position + event.offset;
+        if (event.offset !== 0) stopOverlayScroll();
       }
     },
     ['onPageScroll'],
   );
 
-  const offsets = useMemo(
-    () => [postsY, reelsY, taggedY],
-    [postsY, reelsY, taggedY],
-  );
-
   const topInset = profileHeight + TAB_HEIGHT;
 
   const headerStyle = useAnimatedStyle(() => ({
-    transform: [
-      {
-        translateY: -Math.min(collapseY.value, profileHeight),
-      },
-    ],
-  }));
-
-  const tabsStyle = useAnimatedStyle(() => ({
     transform: [
       {
         translateY: -Math.min(collapseY.value, profileHeight),
@@ -140,6 +146,7 @@ export function ProfilePagerDemoScreen() {
 
   const selectTab = useCallback(
     (nextTab: TabKey) => {
+      runOnUI(stopOverlayScroll)();
       const nextIndex = TAB_KEYS.indexOf(nextTab);
       const currentIndex = activePageIndex.value;
 
@@ -161,7 +168,7 @@ export function ProfilePagerDemoScreen() {
       synchronizePage(nextIndex, currentIndex);
       pagerRef.current?.setPage(nextIndex);
     },
-    [activePageIndex, offsets, profileHeight, synchronizePage],
+    [activePageIndex, offsets, profileHeight, stopOverlayScroll, synchronizePage],
   );
 
   return (
@@ -197,7 +204,8 @@ export function ProfilePagerDemoScreen() {
           >
             {TAB_KEYS.map((tab, index) => {
               const offsetY = offsets[index];
-              if (!offsetY) return null;
+              const maxOffsetY = maxOffsets[index];
+              if (!offsetY || !maxOffsetY) return null;
 
               return (
                 <View key={tab} style={styles.page} collapsable={false}>
@@ -211,6 +219,8 @@ export function ProfilePagerDemoScreen() {
                       listRefs.current[tab] = ref;
                     }}
                     offsetY={offsetY}
+                    maxOffsetY={maxOffsetY}
+                    overlayScroll={overlayScroll.state}
                     activePageIndex={activePageIndex}
                     collapseY={collapseY}
                   />
@@ -226,35 +236,28 @@ export function ProfilePagerDemoScreen() {
           Shared overlay: it exists only once, outside PagerView.
           Therefore only the grid moves horizontally during a swipe.
         */}
-        <Animated.View
-          pointerEvents="box-none"
-          style={[styles.profileOverlay, headerStyle]}
-        >
-          <ProfileHeader
-            onLayout={(event) => {
-              const nextHeight = Math.round(event.nativeEvent.layout.height);
-              if (nextHeight > 0 && nextHeight !== profileHeight) {
-                setProfileHeight(nextHeight);
-              }
-            }}
-          />
-        </Animated.View>
-
-        {profileHeight > 0 ? (
+        <GestureDetector gesture={overlayScroll.gesture}>
           <Animated.View
-            style={[
-              styles.tabsOverlay,
-              { top: profileHeight },
-              tabsStyle,
-            ]}
+            collapsable={false}
+            style={[styles.profileOverlay, headerStyle]}
           >
-            <ProfileTabs
-              activeTab={activeTab}
-              onChange={selectTab}
-              pagePosition={pagePosition}
+            <ProfileHeader
+              onLayout={(event) => {
+                const nextHeight = Math.round(event.nativeEvent.layout.height);
+                if (nextHeight > 0 && nextHeight !== profileHeight) {
+                  setProfileHeight(nextHeight);
+                }
+              }}
             />
+            {profileHeight > 0 ? (
+              <ProfileTabs
+                activeTab={activeTab}
+                onChange={selectTab}
+                pagePosition={pagePosition}
+              />
+            ) : null}
           </Animated.View>
-        ) : null}
+        </GestureDetector>
       </View>
 
       <BottomBar />
@@ -287,14 +290,6 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     zIndex: 20,
-    backgroundColor: '#fff',
-  },
-  tabsOverlay: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    height: TAB_HEIGHT,
-    zIndex: 30,
     backgroundColor: '#fff',
   },
 });

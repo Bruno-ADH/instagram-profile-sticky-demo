@@ -4,14 +4,19 @@ import {
   type FlashListRef,
 } from '@shopify/flash-list';
 import type { ReactElement, Ref } from 'react';
-import { useMemo } from 'react';
+import { useCallback, useMemo, useRef } from 'react';
 import { ActivityIndicator, StyleSheet, Text, View } from 'react-native';
 import Animated, {
+  cancelAnimation,
+  scrollTo,
+  useAnimatedReaction,
+  useAnimatedRef,
   type AnimatedProps,
   type SharedValue,
   useAnimatedScrollHandler,
 } from 'react-native-reanimated';
 
+import type { OverlayScrollState } from '../hooks/use-profile-overlay-scroll';
 import type { PaginatedPhotoFeed } from '../hooks/usePaginatedPhotos';
 import type { FeedPhoto, TabKey } from '../types/profile';
 import { PhotoCell } from './PhotoCell';
@@ -33,6 +38,8 @@ interface ProfileGridPageProps {
   collapsePoint: number;
   listRef: Ref<FlashListRef<FeedPhoto>>;
   offsetY: SharedValue<number>;
+  maxOffsetY: SharedValue<number>;
+  overlayScroll: OverlayScrollState;
   activePageIndex: SharedValue<number>;
   collapseY: SharedValue<number>;
 }
@@ -45,11 +52,38 @@ export function ProfileGridPage({
   collapsePoint,
   listRef,
   offsetY,
+  maxOffsetY,
+  overlayScroll,
   activePageIndex,
   collapseY,
 }: ProfileGridPageProps) {
+  const animatedRef = useAnimatedRef<FlashListRef<FeedPhoto>>();
+  const contentHeight = useRef(0);
+  const viewportHeight = useRef(0);
+  const { page: overlayPage, offset: overlayOffset } = overlayScroll;
+
+  const attachListRef = useCallback((ref: FlashListRef<FeedPhoto> | null) => {
+    animatedRef(ref);
+    if (typeof listRef === 'function') listRef(ref);
+    else if (listRef) listRef.current = ref;
+  }, [animatedRef, listRef]);
+
+  useAnimatedReaction(
+    () => overlayPage.value === pageIndex && activePageIndex.value === pageIndex
+      ? Math.max(0, Math.min(overlayOffset.value, maxOffsetY.value))
+      : null,
+    (targetY) => {
+      if (targetY !== null) scrollTo(animatedRef, 0, targetY, false);
+    },
+  );
+
   const scrollHandler = useAnimatedScrollHandler(
     {
+      onBeginDrag: () => {
+        // A touch in the actual grid takes over from overlay-generated inertia.
+        cancelAnimation(overlayOffset);
+        overlayPage.value = -1;
+      },
       onScroll: (event) => {
         const y = Math.max(0, event.contentOffset.y);
         offsetY.value = y;
@@ -100,7 +134,15 @@ export function ProfileGridPage({
 
   return (
     <AnimatedFlashList
-      ref={listRef}
+      ref={attachListRef}
+      onLayout={(event) => {
+        viewportHeight.current = event.nativeEvent.layout.height;
+        maxOffsetY.value = Math.max(0, contentHeight.current - viewportHeight.current);
+      }}
+      onContentSizeChange={(_width, height) => {
+        contentHeight.current = height;
+        maxOffsetY.value = Math.max(0, height - viewportHeight.current);
+      }}
       data={feed.photos}
       renderItem={({ item }) => <PhotoCell photo={item} tab={tab} />}
       keyExtractor={(item) => item.key}
